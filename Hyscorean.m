@@ -1141,7 +1141,7 @@ Exp.ExciteWidth = 1/FirstPulseLength;
 %Compute the corrected magnetic field [mT]
 Offset = str2double(get(handles.FieldOffset,'string'));
 Exp.Field = Exp.Field + 0.1*Offset;
-Exp.tau = handles.Data.TauValues/1000;
+Exp.tau = handles.currentTaus/1000;
 Exp.dt = handles.Data.TimeStep1;
 Exp.nPoints = length(handles.Data.PreProcessedSignal);
 
