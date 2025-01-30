@@ -117,25 +117,26 @@ end
 
 %Inform user
 fprintf('Setting Hyscorean paths... ')
-%Get MATLAB search paths
-MatlabPaths = path;
-OldPaths = textscan(MatlabPaths,'%s','Delimiter',';');
-OldPaths = OldPaths{1}(:)';
 AddPaths = {pwd,[pwd filesep 'bin'],[pwd filesep 'bin' filesep 'export_fig']};
 
-PathsAlreadyAdded = strfind(horzcat(OldPaths),AddPaths{1});
-
-%Check if Hyscorean paths have been already added
-if isempty([PathsAlreadyAdded{:}])
-  NewPaths = horzcat(AddPaths,OldPaths(1:end));
-  %If not then add them
-  if ~isequal(NewPaths,OldPaths)
-    PathToAdd = sprintf('%s;', NewPaths{:} );
-    PathToAdd = PathToAdd(1:end-1);
-    path(PathToAdd);
-  end
-  %Save the MATLAB search paths
-  savepath
+%Check one by one if Hyscorean paths have been already added
+for i = 1:length(AddPaths)
+    %Get current MATLAB search paths
+    MatlabPaths = path;
+    OldPaths = textscan(MatlabPaths,'%s','Delimiter',';');
+    OldPaths = OldPaths{1}(:)';
+    PathAlreadyAdded = strfind(horzcat(OldPaths),AddPaths{i});
+    if isempty([PathAlreadyAdded{:}])
+      NewPaths = horzcat(AddPaths{i},OldPaths(1:end));
+      %If not then add them
+      if ~isequal(NewPaths,OldPaths)
+        PathToAdd = sprintf('%s;', NewPaths{:} );
+        PathToAdd = PathToAdd(1:end-1);
+        path(PathToAdd);
+      end
+      %Save the MATLAB search paths
+      savepath
+    end
 end
 fprintf('done. \n')
 fprintf('===========================================================================\n')
