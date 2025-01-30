@@ -72,11 +72,17 @@ for Index = 1:numSpec
   %Fill known experimental parameters
   Exp{Index}.Sequence = 'HYSCORE';
   Exp{Index}.Field = DataForFitting.Field + DataForFitting.FieldOffset;
-  Exp{Index}.tau = DataForFitting.TauValues;
+  Exp{Index}.tau = DataForFitting.currentTaus.*1e-3;
   Exp{Index}.dt = DataForFitting.TimeStep1;
   Exp{Index}.nPoints = DataForFitting.nPoints;
-  %Check for compatibility with older versions
-  if isfield(DataForFitting,'ExciteWidth')
+  %Check for compatibility with older versions#
+  if isfield(InputSystem,'Exp')
+      if isfield(InputSystem.Exp,'ExciteWidth')
+          Exp{Index}.ExciteWidth = InputSystem.Exp.ExciteWidth;
+      elseif isfield(DataForFitting,'ExciteWidth')
+          Exp{Index}.ExciteWidth = DataForFitting.ExciteWidth;
+      end
+  elseif isfield(DataForFitting,'ExciteWidth')
     Exp{Index}.ExciteWidth = DataForFitting.ExciteWidth;
   end
   if isfield(DataForFitting,'mwFreq')
