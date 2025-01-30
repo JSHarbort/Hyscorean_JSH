@@ -312,7 +312,7 @@ for iSys = 1:nSystems
     currentVary = Vary{iSys};
     Fields = fieldnames(currentVary);
     for iField = 1:length(Fields)
-        totalVary =  totalVary + sum(getfield(currentVary,Fields{iField}));
+        totalVary =  totalVary + sum(getfield(currentVary,Fields{iField}),'all');
     end
 end
 %Vary cannot be all zeros, otherwise crashes later
@@ -1158,6 +1158,7 @@ try
         FitOpts.TargetID = 1;
         FitOpts.Scaling = FitData.ScalingString{get(findobj('Tag','ScalingMenu'),'Value')};
         FitOpts.Startpoint = get(findobj('Tag','StartpointMenu'),'Value');
+        FitOpts.Verbosity = 0;
         
     end
     
@@ -1194,9 +1195,10 @@ try
     
     switch FitOpts.Startpoint
         case 1 % center of range
-            startx = zeros(FitData.nParameters,1);
+            startx = FitData.CenterVals;
         case 2 % random
-            startx = 2*rand(FitData.nParameters,1) - 1;
+            startx = 2*rand(FitData.nParameters,1) - 1; % rand on interval [-1 1]
+            startx = FitData.CenterVals + startx'.*FitData.VaryVals;
             startx(FitData.inactiveParams) = 0;
         case 3 % selected fit set
             h = findobj('Tag','SetListBox');
@@ -1215,7 +1217,11 @@ try
     FitData.startx = startx;
     
     x0_ = startx;
+    x0_lb = FitData.CenterVals - FitData.VaryVals;
+    x0_ub = FitData.CenterVals + FitData.VaryVals;
     x0_(FitData.inactiveParams) = [];
+    x0_lb(FitData.inactiveParams) = [];
+    x0_ub(FitData.inactiveParams) = [];
     nParameters_ = numel(x0_);
     
     bestx = startx;
@@ -1224,25 +1230,30 @@ try
     else
         fitspc = FitData.ExpSpecScaled;
     end
-    
+
+    FitOpts.IterFcn = @fit_iter_fnc; % function for user stop of fitting functions
     funArgs = {fitspc,FitData,FitOpts};  % input args for assess and residuals_
     
     % Depending on the method chosen launch the assess function with a different esfit function
     if (nParameters_>0)
         switch FitOpts.MethodID
             case 1 % Nelder/Mead simplex
-                bestx0_ = esfit_simplex(@assess,x0_,FitOpts,funArgs{:});
+                bestx0_ = esfit_simplex(@(x)assess(x,funArgs{:}),x0_,x0_lb,x0_ub,FitOpts);
             case 2 % Levenberg/Marquardt
                 FitOpts.Gradient = FitOpts.TolFun;
-                bestx0_ = esfit_levmar(@residuals_,x0_,FitOpts,funArgs{:});
+                residuals_func = @(x) residuals_(x,funArgs{:});
+                % requirement esfit_levmar: [f,~,stopCode] = funfcn(x);
+                bestx0_ = esfit_levmar(residuals_func,x0_,x0_lb,x0_ub,FitOpts);
             case 3 % Monte Carlo
-                bestx0_ = esfit_montecarlo(@assess,nParameters_,FitOpts,funArgs{:});
+                bestx0_ = esfit_montecarlo(@(x)assess(x,funArgs{:}),x0_lb,x0_ub,FitOpts);
             case 4 % Genetic
-                bestx0_ = esfit_genetic(@assess,nParameters_,FitOpts,funArgs{:});
+                rmsd_func = @(x) rmsd_(x,funArgs{:});
+                bestx0_ = esfit_genetic(rmsd_func,x0_lb,x0_ub,FitOpts);
+                bestx0_ = bestx0_(:);
             case 5 % Grid search
-                bestx0_ = esfit_grid(@assess,nParameters_,FitOpts,funArgs{:});
+                bestx0_ = esfit_grid(@(x)assess(x,funArgs{:}),x0_lb,x0_ub,FitOpts);
             case 6 % Particle swarm
-                bestx0_ = esfit_swarm(@assess,nParameters_,FitOpts,funArgs{:});
+                bestx0_ = esfit_swarm(@(x)assess(x,funArgs{:}),x0_lb,x0_ub,FitOpts);
             case 7 %Manual fit
                 assess(startx,funArgs{:});
                 bestx0_ = startx;
@@ -1350,13 +1361,22 @@ try
         ExpSpec = FitData.ExpSpec;
         SpectraConfined = {};
         SpectraExcluded = {};
-        nargouts = length(strsplit(regexp(help('saffron'), '(?<=\()[^)]*(?=\))', 'match', 'once'),','));
+        try
+            % Version request this way exists from 6.0.0 beyond
+            EasySpinInfo = easyspin; % OLD: easyspininfo;
+            EasySpinVersion = EasySpinInfo.Version;
+        catch
+            EasySpinVersion = 5;
+        end
         %Loop over all field positions (i.e. different files/spectra)
-        parfor (Index = 1:numSpec,FitData.CurrentCoreUsage)
+        parfor (Index = 1:numSpec,FitData.CurrentCoreUsage);
             
             %Run saffron for a given field position
-            if nargouts==3
+            if str2double(EasySpinVersion(1))>5
                 %Refactoring of saffron in EasySpin 6.0.0 changed
+                if length(FitData.Exp{Index}.tau) > 1
+                    error('Only a single tau value per spectrum is supported in EasySpin 6. Save tau-spectra separately for simulation.');
+                end
                 [ts,~,out] = saffron(fs,FitData.Exp{Index},FitData.SimOpt{Index});
                 t1 = ts{1};
                 t2 = ts{2};
@@ -1371,8 +1391,12 @@ try
                 Out = out;
             end
             td = Out.td;
-            %Do base-correction as would be done in saffron
-            tdx = basecorr(td,[1 2],[0 0]);
+            %Do baseline-correction as would be done in saffron
+            if str2double(EasySpinVersion(1))>5
+                tdx = basecorr(td,[],[0 0]);
+            else
+                tdx = basecorr(td,[1 2],[0 0]);
+            end
             %If done for experimental data, then do Lorentz-Gauss transformation
             if FitData.SimOpt{Index}.Lorentz2GaussCheck
                 Processed.TimeAxis1 = t1;
@@ -1384,7 +1408,15 @@ try
             %Use same apodization window as experimental data
             tdx = apodizationWin(tdx,FitData.SimOpt{Index}.WindowType,FitData.SimOpt{Index}.WindowDecay1,FitData.SimOpt{Index}.WindowDecay2);
             %Fourier transform with same zerofilling as experimental data
-            Spectrum = fftshift(fft2(tdx,size(ExpSpec{Index},1),size(ExpSpec{Index},2)));
+            % Correction of a bug, when multiple spectra are fitted with
+            % different number of points JS
+    %       Spectrum = fftshift(fft2(tdx,size(ExpSpec{Index},1),size(ExpSpec{Index},2)));
+            dim1 = size(tdx,1)*FitData.SimOpt{Index}.ZeroFillFactor; dim2 = size(tdx,2)*FitData.SimOpt{Index}.ZeroFillFactor;   % dimesion used in experimental spectrum, non-zeros
+            Spectrumfft = fftshift(fft2(tdx,dim1,dim2));    % calculate spectrum with real number of used points in experimental spectrum (non-zero)
+            Spectrum = zeros(size(ExpSpec{Index}));      % preallocate zero matrix of size of experimental data matrix
+            dim1pos = (size(ExpSpec{Index},1)-dim1)/2;
+            dim2pos = (size(ExpSpec{Index},2)-dim2)/2;
+            Spectrum(dim1pos+1:end-dim1pos,dim2pos+1:end-dim2pos) = Spectrumfft;  % put spectrum into the matrix
             %Symmetrize the spectrum if needed
             switch FitData.SimOpt{Index}.Symmetrization
                 case 'Diagonal'
@@ -1551,8 +1583,36 @@ return
 
 
 %===================================================================
-function resi = residuals_(x,ExpSpec,FitDat,FitOpt)
-[rms,resi] = assess(x,ExpSpec,FitDat,FitOpt);
+function [resi_vec, rmsd, userStop] = residuals_(x,ExpSpec,FitDat,FitOpt)
+[~, ~, simspec] = assess(x,ExpSpec,FitDat,FitOpt);
+% rmsd,[],simspec
+resi_vec = [];
+for i = 1:numel(ExpSpec)
+    resi_mat = ExpSpec{i} - simspec{i};
+    resi_vec = [resi_vec resi_mat(:)];
+end
+rmsd = sqrt(mean(abs(resi_vec).^2));
+global UserCommand
+    if UserCommand ~= 1 && UserCommand ~= 99
+        userStop = 0;
+    else
+        userStop = 1;
+    end
+return
+%===================================================================
+
+
+%===================================================================
+function rmsd = rmsd_(x,ExpSpec,FitDat,FitOpt)
+[~, ~, simspec] = assess(x,ExpSpec,FitDat,FitOpt);
+% rmsd,[],simspec
+resi_vec = [];
+for i = 1:numel(ExpSpec)
+    resi_mat = ExpSpec{i} - simspec{i};
+    resi_vec = [resi_vec resi_mat(:)];
+end
+rmsd = sqrt(mean(abs(resi_vec).^2));
+return
 %===================================================================
 
 %===================================================================
@@ -1573,10 +1633,13 @@ end
 if ~isfield(FitData,'individualErrors')
     FitData.individualErrors = cell(FitData.numSpec,1);
 end
+if ~isfield(FitDat,'Exp') && isfield(FitData, 'Exp')
+    FitDat.Exp = FitData.Exp;
+end
 
 Sys0 = FitDat.Sys0;
 Vary = FitDat.Vary;
-Exp = FitData.Exp;
+Exp = FitDat.Exp;
 SimOpt = FitDat.SimOpt;
 rmsd_individual = cell(FitData.numSpec,1);
 
@@ -1610,16 +1673,24 @@ SpectraConfined = {};
 
 SimulationNotSuccesful = true;
 
-% Get the number of outputs in saffron from its docs
-nargouts = length(strsplit(regexp(help('saffron'), '(?<=\()[^)]*(?=\))', 'match', 'once'),','));
+try
+    % Version request this way exists from 6.0.0 on
+	EasySpinInfo = easyspin; % OLD: easyspininfo;
+    EasySpinVersion = EasySpinInfo.Version;
+catch
+    EasySpinVersion = 5;
+end
 while SimulationNotSuccesful
     
     %Loop over all field positions (i.e. different files/spectra)
-    parfor (Index = 1:numSpec,FitData.CurrentCoreUsage)
+    parfor Index = 1:numSpec,FitData.CurrentCoreUsage;
         
         %Run saffron for a given field position
-        if nargouts==3
+        if str2double(EasySpinVersion(1))>5
             %Refactoring of saffron in EasySpin 6.0.0 changed
+            if length(FitData.Exp{Index}.tau) > 1
+                    error('Only a single tau value per spectrum is support in EasySpin 6. Save tau-spectra separately for simulation.');
+            end
             [ts,~,out] = saffron(SimSystems{1},Exp{Index},SimOpt{Index});
             t1 = ts{1};
             t2 = ts{2};
@@ -1628,6 +1699,7 @@ while SimulationNotSuccesful
             [t1,t2,~,out] = saffron(SimSystems,Exp{Index},SimOpt{Index});
         end
         
+
         %Get time-domain signal
         if iscell(out)
             Out = out{1:nOutArguments};
@@ -1635,8 +1707,12 @@ while SimulationNotSuccesful
             Out = out;
         end
         td = Out.td;
-        %Do base-correction as would be done in saffron
-        tdx = basecorr(td,[1 2],[0 0]);
+        %Do baseline-correction as would be done in saffron
+        if str2double(EasySpinVersion(1))>5
+            tdx = basecorr(td,[],[0 0]);
+        else
+            tdx = basecorr(td,[1 2],[0 0]);
+        end
         %If done for experimental data, then do Lorentz-Gauss transformation
         if SimOpt{Index}.Lorentz2GaussCheck
             Processed.TimeAxis1 = t1;
@@ -1648,7 +1724,15 @@ while SimulationNotSuccesful
         %Use same apodization window as experimental data
         tdx = apodizationWin(tdx,SimOpt{Index}.WindowType,SimOpt{Index}.WindowDecay1,SimOpt{Index}.WindowDecay2);
         %Fourier transform with same zerofilling as experimental data
-        Spectrum = fftshift(fft2(tdx,size(ExpSpec{Index},1),size(ExpSpec{Index},2)));
+        % Correction of a bug, when multiple spectra are fitted with
+        % different number of points JS
+%       Spectrum = fftshift(fft2(tdx,size(ExpSpec{Index},1),size(ExpSpec{Index},2)));
+        dim1 = size(tdx,1)*SimOpt{Index}.ZeroFillFactor; dim2 = size(tdx,2)*SimOpt{Index}.ZeroFillFactor;   % dimesion used in experimental spectrum, non-zeros
+        Spectrumfft = fftshift(fft2(tdx,dim1,dim2));    % calculate spectrum with real number of used points in experimental spectrum (non-zero)
+        Spectrum = zeros(size(ExpSpec{Index}));      % preallocate zero matrix of size of experimental data matrix
+        dim1pos = (size(ExpSpec{Index},1)-dim1)/2;
+        dim2pos = (size(ExpSpec{Index},2)-dim2)/2;
+        Spectrum(dim1pos+1:end-dim1pos,dim2pos+1:end-dim2pos) = Spectrumfft;  % put spectrum into the matrix
         switch SimOpt{Index}.Symmetrization
             case 'Diagonal'
                 Spectrum = (Spectrum.*Spectrum').^0.5;
@@ -1697,11 +1781,11 @@ while SimulationNotSuccesful
         %   Spectrum = Spectrum.*FitData.WeightsMap;
         Spectrum = Spectrum/max(max(abs(Spectrum)));
         simspec{Index} = Spectrum;
-        
+       
         % rescale spectrum before RMSD computation
         simspec{Index} = rescale_mod(abs(simspec{Index}),ExpSpec{Index},ScalingOption);
         simspec{Index} = reshape(simspec{Index},length(ExpSpec{Index}),length(ExpSpec{Index}));
-        
+
         %Compute the RMSD for this simulation
         rmsd_individual{Index} = norm(simspec{Index} - ExpSpec{Index})/sqrt(numel(ExpSpec{Index}));
         rmsd = rmsd + rmsd_individual{Index};
@@ -1762,7 +1846,7 @@ end
 FitData.DisplayingFitSetSpec = false;
 
 if FitData.GUI%&& ((UserCommand~=99) )
-    TimeStep = FitData.Exp{FitData.CurrentSpectrumDisplay}.dt;
+    TimeStep = FitData.Exp{FitData.CurrentSpectrumDisplay}.dt*FitData.SimOpt{FitData.CurrentSpectrumDisplay}.TimeStepFactor;        % Changed in order that sim and exp agree in Frequency JS
     FrequencyAxis = linspace(-1/(2*TimeStep),1/(2*TimeStep),length(FitData.ExpSpec{FitData.CurrentSpectrumDisplay}));
     CurrentExpSpec = ExpSpec{FitData.CurrentSpectrumDisplay};
     CurrentSimSpec = simspec{FitData.CurrentSpectrumDisplay};
@@ -1968,6 +2052,18 @@ end
 return
 %==========================================================================
 
+
+%==========================================================================
+function [userStop] = fit_iter_fnc(info_struct)
+    global UserCommand;
+    if UserCommand ~= 1 && UserCommand ~= 99
+        userStop = 0;
+    else
+        userStop = 1;
+    end
+return
+%==========================================================================
+
 %==========================================================================
 % Calculate spin systems with values based on Sys0 (starting points), Vary
 % (parameters to vary, and their vary range), and x (current point in vary
@@ -1988,16 +2084,23 @@ for iSys = 1:numel(Sys0)
     thisSys = Sys0{iSys};
     
     pidx = FitData.xidx(iSys):FitData.xidx(iSys+1)-1;
-    if (nargin<3)
-        Shifts = zeros(numel(VaryVals),1);
-    else
-        Shifts = x(pidx).*VaryVals(:);
+    if nargin > 2
+        x_iSys = x(pidx);
+        % Shifts = zeros(numel(VaryVals),1);
+    % else
+        % Shifts = x(pidx).*VaryVals(:); % Problem: for this definition x should be from intervall [0 1]
+        % shifts needed to retain structure
+        % Shifts = x(:);
     end
-    values_ = [];
+    values_ = zeros(1,numel(VaryVals));
     for p = 1:numel(VaryVals)
         f = thisSys.(Fields{p});
         idx = Indices(p,:);
-        values_(p) = f(idx(1),idx(2)) + Shifts(p);
+        if nargin < 3
+            values_(p) = f(idx(1),idx(2));
+        else
+            values_(p) = x_iSys(p);
+        end
         f(idx(1),idx(2)) = values_(p);
         thisSys.(Fields{p}) = f;
     end
@@ -2427,7 +2530,7 @@ while true
             currentVary = Vary{iSys};
             Fields = fieldnames(currentVary);
             for iField = 1:length(Fields)
-                totalVary =  totalVary + sum(getfield(currentVary,Fields{iField}));
+                totalVary =  totalVary + sum(getfield(currentVary,Fields{iField}),'all');
             end
         end
         %Vary cannot be all zeros, otherwise crashes later
@@ -2618,7 +2721,7 @@ global FitData FitOpts
 FitData.CurrentSpectrumDisplay = get(hObject,'value');
 
 %Construct the frequency axis again for the experimental spectrum
-TimeStep = FitData.SimOpt{FitData.CurrentSpectrumDisplay}.TimeStepFactor*FitData.Exp{FitData.CurrentSpectrumDisplay}.dt;
+TimeStep = FitData.SimOpt{FitData.CurrentSpectrumDisplay}.TimeStepFactor*FitData.Exp{FitData.CurrentSpectrumDisplay}.dt;        % Changed in order that sim and exp agree in Frequency JS
 FrequencyAxis = linspace(-1/(2*TimeStep),1/(2*TimeStep),length(FitData.ExpSpec{FitData.CurrentSpectrumDisplay}));
 
 %Get the corresponding experimental spectrum
@@ -2678,7 +2781,7 @@ set(findobj('Tag','expdata_projection2'),'YData',FrequencyAxis,'XData',Inset);
 if isfield(FitData,'bestspec')
     
     %Construct the frequency axis again for the fit spectra
-    TimeStep = FitData.Exp{FitData.CurrentSpectrumDisplay}.dt;
+    TimeStep = FitData.Exp{FitData.CurrentSpectrumDisplay}.dt*FitData.SimOpt{FitData.CurrentSpectrumDisplay}.TimeStepFactor;            % Changed in order that sim and exp agree in Frequency
     FrequencyAxis = linspace(-1/(2*TimeStep),1/(2*TimeStep),length(FitData.ExpSpec{FitData.CurrentSpectrumDisplay}));
     
     CurrentBestSpec = abs(FitData.bestspec{FitData.CurrentSpectrumDisplay});
@@ -2972,6 +3075,11 @@ end
 stru = sprintf('FitData.%s{%d}.%s',struName,iSys,parName);
 try
     eval([stru '=' callbackData.EditData ';']);
+    if cidx==5
+        FitData.CenterVals(ridx) = numval;
+    elseif cidx==6
+        FitData.VaryVals(ridx) = numval;
+    end
 catch
     hTable.Data{ridx,cidx} = callbackData.PreviousData;
 end
@@ -3120,7 +3228,6 @@ global FitData FitOpts
 
 if getpref('hyscorean','reportlicense')
     
-    
     %Store all information contained in global variables into report data
     ReportData.FitData = FitData;
     ReportData.FitOpts = FitOpts;
@@ -3236,14 +3343,25 @@ if getpref('hyscorean','reportlicense')
     messageBox = msgbox('Generating report. Please wait...','modal');
     delete(messageBox.Children(1))
     drawnow
-    
-    %Generate report
-    report Hyscorean_Fitting_report -fpdf ;
-    
+
+    %Generate report using org. Matlab report function
+    which_report = which('report','-all');
+    report_path_logic = contains(which_report(:), '\toolbox\rptgen\rptgen\report.m');
+    report_path = fileparts(which_report{report_path_logic});
+    old_path = pwd;
+    cd(report_path);
+    report_func = str2func('report');
+    cd(old_path);
+    report_func('Hyscorean_Fitting_report', '-fpdf');
+
     evalin('base','clear ReportData')
     
     delete(messageBox)
     
+    % JUST, 8.11.2023 put data into a mat file to plot it later
+    save('reportdata.mat','FitData');
+    %
+
 else
     %Report generator is not available without the license
     warning('MATLAB report generator license missing. Report cannot be generated.')
