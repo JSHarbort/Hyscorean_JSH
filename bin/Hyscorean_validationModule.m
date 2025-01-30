@@ -1293,10 +1293,17 @@ if getpref('hyscorean','reportlicense')
   
   %Send structure to workspace
   assignin('base', 'ReportData', ReportData);
-  
-  %Generate report
-  report Hyscorean_Validation_report -fpdf ;
-  
+
+  %Generate report using org. Matlab report function
+  which_report = which('report','-all');
+  report_path_logic = contains(which_report(:), '\toolbox\rptgen\rptgen\report.m');
+  report_path = fileparts(which_report{report_path_logic});
+  old_path = pwd;
+  cd(report_path);
+  report_func = str2func('report');
+  cd(old_path);
+  report_func('Hyscorean_Validation_report', '-fpdf');
+
   evalin('base','clear ReportData')
   
 else

@@ -324,8 +324,17 @@ reportdata.ProcessingReport_logo_Path = fullfile(HyscoreanPath,'bin','Processing
 
 %Send structure to workspace
 assignin('base', 'reportdata', reportdata);
-%Generate report
-report Hyscorean_report -fpdf ;
+
+%Generate report using org. Matlab report function
+which_report = which('report','-all');
+report_path_logic = contains(which_report(:), '\toolbox\rptgen\rptgen\report.m'); 
+report_path = fileparts(which_report{report_path_logic});
+old_path = pwd;
+cd(report_path);
+report_func = str2func('report');
+cd(old_path);
+report_func('Hyscorean_report', '-fpdf');
+
 %Remove structure from workspace
 evalin('base', 'clear reportdata');
 
