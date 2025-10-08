@@ -341,9 +341,9 @@ end
 if ishghandle(InputFig)
   % Go into uiwait if the figure handle is still valid.
   % This is mostly the case during regular use.
-  c = matlab.ui.internal.dialog.DialogUtils.disableAllWindowsSafely();
+  % c = matlab.ui.internal.dialog.DialogUtils.disableAllWindowsSafely(); % The following command causes an error, I think because of a change in MATLAB's Java environment? The error prevents updating of the Fitting Module's parameter dialogue box. 
   uiwait(InputFig);
-  delete(c);
+  % delete(c); % Of course, c is now never created. 
 end
 
 % Check handle validity again since we may be out of uiwait because the
