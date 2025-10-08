@@ -13,7 +13,7 @@ Requirements
 
 The following programs/packages are required in order to run Hyscorean:
 
- * MATLAB 2016b-2019b *(required)*
+ * MATLAB 2016b-2024b *(required)*
  * Report Generator *(optional)*
  * Parallel Computing Toolbox *(optional)*
  * Image Processing Toolbox *(optional)*
@@ -21,6 +21,8 @@ The following programs/packages are required in order to run Hyscorean:
  
  *(required)* - Required for running minimal functionality <br>
  *(optional)* - Required for additional functionality
+
+ Note that MATLAB versions 2025a and later break the functionality of the GUI in Hyscorean (which uses some Java elements). 
 
 Installation
 -------------
